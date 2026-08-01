@@ -266,7 +266,6 @@ class FileOperations:
         """Process filename with user preferences"""
         delete_words = set(self.db.get_user_data(user_id, "delete_words", []))
         replacements = self.db.get_user_data(user_id, "replacement_words", {})
-        # 🔥 Default tag empty rakha hai taaki extra text na jude
         rename_tag = self.db.get_user_data(user_id, "rename_tag", "")
         
         path = Path(file_path)
@@ -369,10 +368,14 @@ class SmartTelegramBot:
         self.pro_client = pro
         print(f"Pro client available: {'Yes' if self.pro_client else 'No'}")
     
-    def get_thumbnail_path(self, user_id: int) -> Optional[str]:
-        """Get user's custom thumbnail path"""
+    def get_thumbnail_path(self, user_id: int, fallback_thumb: Optional[str] = None) -> Optional[str]:
+        """Get user's custom thumbnail path, or fallback to original downloaded thumbnail"""
         thumb_path = f'{user_id}.jpg'
-        return thumb_path if os.path.exists(thumb_path) else None
+        if os.path.exists(thumb_path):
+            return thumb_path
+        if fallback_thumb and os.path.exists(fallback_thumb):
+            return fallback_thumb
+        return None
     
     def parse_target_chat(self, target: str) -> Tuple[int, Optional[int]]:
         """Parse chat ID and topic ID from target string"""
@@ -404,44 +407,53 @@ class SmartTelegramBot:
         
         return processed if processed else None
 
-    async def upload_with_pyrogram(self, file_path: str, user_id: int, target_chat_id: int, caption: str, topic_id: Optional[int] = None, edit_msg=None):
-        """Upload using Pyrogram with proper file type detection"""
+    async def upload_with_pyrogram(self, file_path: str, user_id: int, target_chat_id: int, caption: str, topic_id: Optional[int] = None, edit_msg=None, orig_thumb: Optional[str] = None, video_meta: Optional[dict] = None):
+        """Upload using Pyrogram with proper file type detection and original aspect ratio"""
         file_type = self.media_processor.get_file_type(file_path)
-        thumb_path = self.get_thumbnail_path(user_id)
+        thumb_path = self.get_thumbnail_path(user_id, orig_thumb)
         
         progress_args = ("╭──────────────╮\n│ **__Pyro Uploader__**\n├────────", edit_msg, time.time())
         
         try:
             if file_type == 'video':
-                # Get video metadata
-                metadata = {}
-                if 'video_metadata' in globals():
-                    metadata = video_metadata(file_path)
+                metadata = video_meta or {}
+                if not metadata and 'video_metadata' in globals():
+                    try:
+                        metadata = video_metadata(file_path)
+                    except:
+                        metadata = {}
                 
                 width = metadata.get('width', 0)
                 height = metadata.get('height', 0)
                 duration = metadata.get('duration', 0)
                 
-                # Generate thumbnail if not exists
+                # 🔥 FIX: Screenshot in middle of video if no thumbnail is available
                 if not thumb_path and 'screenshot' in globals():
                     try:
-                        thumb_path = await screenshot(file_path, duration, user_id)
+                        ss_time = duration // 2 if duration > 10 else (2 if duration > 2 else 0)
+                        thumb_path = await screenshot(file_path, ss_time, user_id)
                     except:
                         pass
                 
-                result = await app.send_video(
-                    chat_id=target_chat_id,
-                    video=file_path,
-                    caption=caption,
-                    height=height,
-                    width=width,
-                    duration=duration,
-                    thumb=thumb_path,
-                    reply_to_message_id=topic_id,
-                    parse_mode=ParseMode.MARKDOWN,
-                    progress=progress_bar,
-                    progress_args=progress_args
-                )
+                # 🔥 FIX: Construct kwargs dynamically to prevent height crushing when dimensions are 0
+                send_kwargs = {
+                    "chat_id": target_chat_id,
+                    "video": file_path,
+                    "caption": caption,
+                    "thumb": thumb_path,
+                    "reply_to_message_id": topic_id,
+                    "parse_mode": ParseMode.MARKDOWN,
+                    "progress": progress_bar,
+                    "progress_args": progress_args
+                }
+                if width > 0:
+                    send_kwargs["width"] = width
+                if height > 0:
+                    send_kwargs["height"] = height
+                if duration > 0:
+                    send_kwargs["duration"] = duration
+
+                result = await app.send_video(**send_kwargs)
                 
             elif file_type == 'photo':
                 result = await app.send_photo(
@@ -491,8 +503,8 @@ class SmartTelegramBot:
                 except:
                     pass
 
-    async def upload_with_telethon(self, file_path: str, user_id: int, target_chat_id: int, caption: str, topic_id: Optional[int] = None, edit_msg=None):
-        """Upload using Telethon (SpyLib) with enhanced features"""
+    async def upload_with_telethon(self, file_path: str, user_id: int, target_chat_id: int, caption: str, topic_id: Optional[int] = None, edit_msg=None, orig_thumb: Optional[str] = None, video_meta: Optional[dict] = None):
+        """Upload using Telethon (SpyLib) with enhanced features and original thumbnail/aspect ratio"""
         try:
             if edit_msg:
                 await edit_msg.delete()
@@ -500,7 +512,6 @@ class SmartTelegramBot:
             progress_message = await gf.send_message(user_id, "**__ShuklaLib ⚡ Uploading...__**")
             html_caption = await self.caption_formatter.markdown_to_html(caption)
             
-            # 🔥 FIX: Pass real file name and drop user_id from fast_upload to prevent teampy/userid prefix
             clean_filename = os.path.basename(file_path)
             uploaded = await fast_upload(
                 gf, file_path,
@@ -511,22 +522,37 @@ class SmartTelegramBot:
             
             await progress_message.delete()
             
-            # Prepare attributes based on file type
             file_type = self.media_processor.get_file_type(file_path)
-            
             attributes = [DocumentAttributeFilename(file_name=clean_filename)]
             
-            if file_type == 'video':
-                if 'video_metadata' in globals():
-                    metadata = video_metadata(file_path)
-                    duration = metadata.get('duration', 0)
-                    width = metadata.get('width', 0)
-                    height = metadata.get('height', 0)
-                    attributes.append(DocumentAttributeVideo(
-                        duration=duration, w=width, h=height, supports_streaming=True
-                    ))
+            thumb_path = self.get_thumbnail_path(user_id, orig_thumb)
             
-            thumb_path = self.get_thumbnail_path(user_id)
+            if file_type == 'video':
+                metadata = video_meta or {}
+                if not metadata and 'video_metadata' in globals():
+                    try:
+                        metadata = video_metadata(file_path)
+                    except:
+                        metadata = {}
+
+                duration = metadata.get('duration', 0)
+                width = metadata.get('width', 0)
+                height = metadata.get('height', 0)
+
+                # 🔥 FIX: Auto screenshot if no thumb
+                if not thumb_path and 'screenshot' in globals():
+                    try:
+                        ss_time = duration // 2 if duration > 10 else (2 if duration > 2 else 0)
+                        thumb_path = await screenshot(file_path, ss_time, user_id)
+                    except:
+                        pass
+                
+                attributes.append(DocumentAttributeVideo(
+                    duration=int(duration),
+                    w=int(width) if width > 0 else 0,
+                    h=int(height) if height > 0 else 0,
+                    supports_streaming=True
+                ))
             
             try:
                 log_chat_id = int(LOG_GROUP)
@@ -626,6 +652,8 @@ class SmartTelegramBot:
         """Main message processing function with enhanced error handling"""
         edit_msg = None
         file_path = None
+        orig_thumb_path = None
+        video_meta = {}
         
         try:
             # Parse and validate message link
@@ -657,6 +685,21 @@ class SmartTelegramBot:
             
             filename, file_size, media_type = self.media_processor.get_media_info(msg)
             
+            # 🔥 FIX: Extract metadata and original thumbnail directly from original video message
+            if msg.video:
+                video_meta = {
+                    'width': getattr(msg.video, 'width', 0),
+                    'height': getattr(msg.video, 'height', 0),
+                    'duration': getattr(msg.video, 'duration', 0)
+                }
+                if getattr(msg.video, 'thumbs', None):
+                    try:
+                        orig_thumb_path = f"{sender}_orig.jpg"
+                        await userbot.download_media(msg.video.thumbs[-1].file_id, file_name=orig_thumb_path)
+                    except Exception as e:
+                        print(f"Original thumb download error: {e}")
+                        orig_thumb_path = None
+
             # Handle direct media types (voice, video_note, sticker)
             if await self._handle_direct_media(msg, target_chat_id, topic_id, edit_id, media_type):
                 return
@@ -700,9 +743,9 @@ class SmartTelegramBot:
             
             # Regular upload
             if upload_method == "Telethon" and gf:
-                await self.upload_with_telethon(file_path, sender, target_chat_id, caption, topic_id, edit_msg)
+                await self.upload_with_telethon(file_path, sender, target_chat_id, caption, topic_id, edit_msg, orig_thumb=orig_thumb_path, video_meta=video_meta)
             else:
-                await self.upload_with_pyrogram(file_path, sender, target_chat_id, caption, topic_id, edit_msg)
+                await self.upload_with_pyrogram(file_path, sender, target_chat_id, caption, topic_id, edit_msg, orig_thumb=orig_thumb_path, video_meta=video_meta)
                     
         except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid) as e:
             await app.edit_message_text(sender, edit_id, "❌ Access denied. Have you joined the channel?")
@@ -713,6 +756,8 @@ class SmartTelegramBot:
             # Cleanup
             if file_path:
                 await self.file_ops._cleanup_file(file_path)
+            if orig_thumb_path:
+                await self.file_ops._cleanup_file(orig_thumb_path)
             gc.collect()
 
     async def _parse_message_link(self, userbot, msg_link: str, offset: int, protected_channels: Set[int], sender: int, edit_id: int) -> Tuple[Optional[int], Optional[int]]:
@@ -838,6 +883,8 @@ class SmartTelegramBot:
         target_chat_id, topic_id = self.parse_target_chat(target_chat_str)
         forward_text = self.db.get_user_data(sender, "forward_text", True)
         file_path = None
+        orig_thumb_path = None
+        video_meta = {}
         
         try:
             # Try direct copy first
@@ -900,6 +947,19 @@ class SmartTelegramBot:
                 # Download and upload media
                 final_caption = await self._format_caption_with_custom(msg.caption.markdown if msg.caption else "", sender, custom_caption)
                 
+                if msg.video:
+                    video_meta = {
+                        'width': getattr(msg.video, 'width', 0),
+                        'height': getattr(msg.video, 'height', 0),
+                        'duration': getattr(msg.video, 'duration', 0)
+                    }
+                    if getattr(msg.video, 'thumbs', None):
+                        try:
+                            orig_thumb_path = f"{sender}_orig.jpg"
+                            await userbot.download_media(msg.video.thumbs[-1].file_id, file_name=orig_thumb_path)
+                        except Exception as e:
+                            orig_thumb_path = None
+
                 progress_args = ("Downloading...", edit_msg, time.time())
                 file_path = await userbot.download_media(msg, progress=progress_bar, progress_args=progress_args)
                 file_path = await self.file_ops.process_filename(file_path, sender)
@@ -923,15 +983,17 @@ class SmartTelegramBot:
                 else:
                     upload_method = self.db.get_user_data(sender, "upload_method", "Pyrogram")
                     if upload_method == "Telethon":
-                        await self.upload_with_telethon(file_path, sender, target_chat_id, final_caption, topic_id, edit_msg)
+                        await self.upload_with_telethon(file_path, sender, target_chat_id, final_caption, topic_id, edit_msg, orig_thumb=orig_thumb_path, video_meta=video_meta)
                     else:
-                        await self.upload_with_pyrogram(file_path, sender, target_chat_id, final_caption, topic_id, edit_msg)
+                        await self.upload_with_pyrogram(file_path, sender, target_chat_id, final_caption, topic_id, edit_msg, orig_thumb=orig_thumb_path, video_meta=video_meta)
 
         except Exception as e:
             print(f"Public message copy error: {e}")
         finally:
             if file_path:
                 await self.file_ops._cleanup_file(file_path)
+            if orig_thumb_path:
+                await self.file_ops._cleanup_file(orig_thumb_path)
 
     async def _format_caption_with_custom(self, original_caption: str, sender: int, custom_caption: str) -> str:
         """Format caption with user preferences"""
