@@ -210,7 +210,7 @@ class ProgressManager:
             f"│ **__Speed:__** {speed_mbps:.2f} Mbps\n"
             f"│ **__ETA:__** {eta_min:.2f} min\n"
             f"╰──────────────────╯\n\n"
-            f"**__Powered by Team SPY__**"
+            f"**__Powered by  @shuklabots__**"
         )
 
 class CaptionFormatter:
@@ -497,7 +497,7 @@ class SmartTelegramBot:
             if edit_msg:
                 await edit_msg.delete()
             
-            progress_message = await gf.send_message(user_id, "**__SpyLib ⚡ Uploading...__**")
+            progress_message = await gf.send_message(user_id, "**__ShuklaLib ⚡ Uploading...__**")
             html_caption = await self.caption_formatter.markdown_to_html(caption)
             
             # Upload file using fast_upload
@@ -558,7 +558,7 @@ class SmartTelegramBot:
             
         except Exception as e:
             # We use app (Pyrogram) to send error because it handles string/int easily
-            await app.send_message(LOG_GROUP, f"**SpyLib Upload Failed:** {str(e)}")
+            await app.send_message(LOG_GROUP, f"**ShuklaLib Upload Failed:** {str(e)}")
             raise
 
     async def handle_large_file_upload(self, file_path: str, sender: int, edit_msg, caption: str):
@@ -612,7 +612,7 @@ class SmartTelegramBot:
             if free_check == 1:
                 # Free user - send with protection
                 reply_markup = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("💎 Get Premium to Forward", url="https://t.me/kingofpatal")
+                    InlineKeyboardButton("💎 Get Premium to Forward", url="https://t.me/shuklaXDBot")
                 ]])
                 await app.copy_message(target_chat_id, LOG_GROUP, result.id, protect_content=True, reply_markup=reply_markup)
             else:
@@ -732,7 +732,7 @@ class SmartTelegramBot:
                 msg_id = int(parts[-1]) + offset
             
             if chat_id in protected_channels:
-                await app.edit_message_text(sender, edit_id, "❌ This channel is protected by **Team SPY**.")
+                await app.edit_message_text(sender, edit_id, "❌ This channel is protected by ** @shuklabots**.")
                 return None, None
                 
             return chat_id, msg_id
@@ -965,7 +965,7 @@ class SmartTelegramBot:
             [Button.inline("Set Thumbnail", b'setthumb'), Button.inline("Remove Thumbnail", b'remthumb')],
             [Button.inline(f"Forward Text: {text_status}", b'toggle_text'), Button.inline("Upload Method", b'uploadmethod')],
             [Button.inline("PDF Watermark", b'pdfwt'), Button.inline("Video Watermark", b'watermark')],
-            [Button.url("Report Issues", "https://t.me/team_spy_pro")]
+            [Button.url("Report Issues", "https://t.me/shuklaXDBot")]
         ]
         
         message = (
@@ -1013,7 +1013,7 @@ async def callback_query_handler(event):
         
         buttons = [
             [Button.inline(f"Pyrogram v2{pyro_check}", b'pyrogram')],
-            [Button.inline(f"SpyLib v1 ⚡{tele_check}", b'telethon')]
+            [Button.inline(f"ShuklaLib v1 ⚡{tele_check}", b'telethon')]
         ]
         await event.edit(
             "📤 **Choose Upload Method:**\n\n"
@@ -1029,7 +1029,7 @@ async def callback_query_handler(event):
 
     elif data == b'telethon':
         telegram_bot.db.save_user_data(user_id, "upload_method", "Telethon")
-        await event.edit("✅ Upload method set to **SpyLib v1 ⚡**\n\nThanks for helping us test this advanced library!")
+        await event.edit("✅ Upload method set to **ShuklaLib v1 ⚡**\n\nThanks for helping us test this advanced library!")
 
     # Session management
     elif data == b'logout':
