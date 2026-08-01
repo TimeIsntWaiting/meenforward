@@ -28,7 +28,6 @@ import pymongo
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 from pyrogram.errors import ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid, RPCError
 from pyrogram.enums import MessageMediaType, ParseMode
-# 🔥 FIX 1: Added DocumentAttributeFilename
 from telethon.tl.types import DocumentAttributeVideo, DocumentAttributeFilename
 from telethon import events, Button
 from devgagan import app, sex as gf
@@ -267,7 +266,8 @@ class FileOperations:
         """Process filename with user preferences"""
         delete_words = set(self.db.get_user_data(user_id, "delete_words", []))
         replacements = self.db.get_user_data(user_id, "replacement_words", {})
-        rename_tag = self.db.get_user_data(user_id, "rename_tag", "Team SPY")
+        # 🔥 Default tag empty rakha hai taaki extra text na jude
+        rename_tag = self.db.get_user_data(user_id, "rename_tag", "")
         
         path = Path(file_path)
         name = path.stem
@@ -276,7 +276,6 @@ class FileOperations:
         if name.startswith(f"{user_id}_"):
             name = name.replace(f"{user_id}_", "", 1)
         
-        import re
         name = re.sub(r'^\d+_', '', name)
         
         # Process filename
@@ -290,7 +289,8 @@ class FileOperations:
         if extension.lower() in self.config.VIDEO_EXTS and extension.lower() not in ['mp4']:
             extension = 'mp4'
         
-        new_name = f"{name.strip()} {rename_tag}.{extension}"
+        tag_str = f" {rename_tag}" if rename_tag else ""
+        new_name = f"{name.strip()}{tag_str}.{extension}"
         new_path = path.parent / new_name
         
         await asyncio.to_thread(os.rename, file_path, new_path)
@@ -500,13 +500,13 @@ class SmartTelegramBot:
             progress_message = await gf.send_message(user_id, "**__ShuklaLib ⚡ Uploading...__**")
             html_caption = await self.caption_formatter.markdown_to_html(caption)
             
-            # Upload file using fast_upload
+            # 🔥 FIX: Pass real file name and drop user_id from fast_upload to prevent teampy/userid prefix
+            clean_filename = os.path.basename(file_path)
             uploaded = await fast_upload(
                 gf, file_path,
                 reply=progress_message,
-                name=None,
-                progress_bar_function=lambda done, total: self.progress_manager.calculate_progress(done, total, user_id, "SpyLib"),
-                user_id=user_id
+                name=clean_filename,
+                progress_bar_function=lambda done, total: self.progress_manager.calculate_progress(done, total, user_id, "SpyLib")
             )
             
             await progress_message.delete()
@@ -514,8 +514,7 @@ class SmartTelegramBot:
             # Prepare attributes based on file type
             file_type = self.media_processor.get_file_type(file_path)
             
-            # 🔥 FIX 1: Explicitly tell Telethon to use our cleanly processed filename
-            attributes = [DocumentAttributeFilename(file_name=os.path.basename(file_path))]
+            attributes = [DocumentAttributeFilename(file_name=clean_filename)]
             
             if file_type == 'video':
                 if 'video_metadata' in globals():
@@ -529,7 +528,6 @@ class SmartTelegramBot:
             
             thumb_path = self.get_thumbnail_path(user_id)
             
-            # 🔥 FIX 2: Convert LOG_GROUP ID securely for Telethon (No more Phone Number error)
             try:
                 log_chat_id = int(LOG_GROUP)
             except (ValueError, TypeError):
@@ -557,7 +555,6 @@ class SmartTelegramBot:
             )
             
         except Exception as e:
-            # We use app (Pyrogram) to send error because it handles string/int easily
             await app.send_message(LOG_GROUP, f"**ShuklaLib Upload Failed:** {str(e)}")
             raise
 
@@ -1109,7 +1106,7 @@ async def callback_query_handler(event):
             else:
                 await event.respond("❌ Error occurred while resetting settings.")
         except Exception as e:
-            await event.respond(f"❌ Reset failed: {e}")
+            event.respond(f"❌ Reset failed: {e}")
 
 @gf.on(events.NewMessage(func=lambda e: e.sender_id in telegram_bot.pending_photos))
 async def thumbnail_handler(event):
